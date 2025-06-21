@@ -1,10 +1,22 @@
+"""
+MorseTalk - Text to Speech & Emergency Alert System
+
+This script reads decoded Morse code messages from the Arduino/ESP32 via serial,
+converts them to speech, and handles emergency calls/SMS when triggered.
+
+It uses pyttsx3 for text-to-speech and Twilio API for emergency communications.
+
+Note: You'll need to update the Twilio credentials and phone numbers with your own.
+"""
+
 import time
 import pyttsx3
 import serial
 from twilio.rest import Client
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ===== List of different Twilio trial accounts and their verified recipients =====
+# Twilio accounts configuration - replace XXX with actual digits
+# Using multiple accounts to handle concurrent notifications
 recipients = [
     {
         'account_sid': 'AC1c35d0ac4f9e5427975422f365bXXXXX',
@@ -20,21 +32,28 @@ recipients = [
     },
 ]
 
-# ===== Serial port configuration =====
-PORT = 'COM7'
+# Serial port settings - update COM port if needed
+PORT = 'COM7'  # Change this to match your Arduino's port
 BAUD = 115200
 
+# Initialize serial connection
 ser = serial.Serial(PORT, BAUD, timeout=1)
-time.sleep(2)  # ESP32 reset
+time.sleep(2)  # Wait for ESP32 to reset
 
-# ===== Initialize TTS engine =====
+# Set up text-to-speech engine
 engine = pyttsx3.init()
-engine.setProperty('rate', 150)
+engine.setProperty('rate', 150)  # Adjust speaking rate
 
 def notify_recipient(r):
-    """Make the call and send SMS for one recipient dict r."""
+    """
+    Make emergency call and send SMS to a recipient
+    
+    Args:
+        r (dict): Dictionary containing recipient's Twilio credentials and numbers
+    """
     client = Client(r['account_sid'], r['auth_token'])
-    # call
+    
+    # Make emergency call with TwiML instructions
     call = client.calls.create(
         twiml='<Response>'
           '<Say>' \
@@ -47,7 +66,8 @@ def notify_recipient(r):
         to=r['recipient_number']
     )
     print(f"✅ Call sent to {r['recipient_number']} (SID: {call.sid})")
-    # SMS
+    
+    # Send SMS alert
     msg = client.messages.create(
         body="🚨 Alert: Your ESP32 device triggered an emergency!",
         from_=r['twilio_number'],
@@ -57,9 +77,13 @@ def notify_recipient(r):
 
 print("Listening for decoded Morse, call trigger, and text for TTS...")
 
+# Main loop - continuously read from serial port
 while True:
     try:
+        # Read and decode a line from serial
         line = ser.readline().decode('utf-8', errors='ignore').strip()
+        
+        # Skip empty or special messages
         if (
             not line
             or line == "[DEL]"
@@ -70,8 +94,9 @@ while True:
 
         print("Received:", line)
 
+        # Handle emergency trigger
         if line == "CALL_TRIGGERED":
-            # notify all recipients in parallel
+            # Notify all recipients in parallel using ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=len(recipients)) as executor:
                 futures = {executor.submit(notify_recipient, r): r for r in recipients}
                 for fut in as_completed(futures):
@@ -82,7 +107,7 @@ while True:
                         print(f"❌ Failed for {r['recipient_number']}: {e}")
 
         else:
-            # normal messages
+            # Convert regular messages to speech
             engine.say(line)
             engine.runAndWait()
 
@@ -91,3 +116,4 @@ while True:
         break
     except Exception as e:
         print(f"Error during processing: {e}")
+        # Continue despite errors to keep the program running
